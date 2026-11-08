@@ -7,7 +7,8 @@
 <meta name="theme-color" content="#0969da">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="辦公室相框">
-<link rel="manifest" href="manifest.webmanifest">
+<!-- manifest 不寫死在這裡：iPhone 的 Safari 一讀到 manifest，加入主畫面時就改用它的 start_url，# 後面的設定就丟了。
+     Android 用的 manifest 由 script 依目前網址產生（setManifest）。 -->
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png">
 <title>辦公室相框</title>
@@ -71,7 +72,9 @@
   <!-- 第一次用（GitHub 模式）：貼上中繼 repo 和 token；通常是用帶 #r=…&t=… 的連結一次設好 -->
   <div class="card" id="setup" hidden>
     <h2>第一次使用</h2>
-    <div class="hint">請用寄給你的設定連結打開，或在這裡貼上：</div>
+    <div class="hint">請用相機掃設定 QR code 打開。從桌面打開卻看到這頁的話：在 Safari／瀏覽器裡長按網址列複製那條設定連結，再按：</div>
+    <div class="btns" style="grid-template-columns:1fr;margin:10px 0 4px"><button class="b primary" id="s-paste">📋 貼上設定連結</button></div>
+    <div class="hint">或手動填：</div>
     <div class="label">中繼 repo</div><input type="text" id="s-repo" placeholder="帳號/pi-frame-relay" autocomplete="off" spellcheck="false">
     <div class="label">token</div><input type="password" id="s-token" placeholder="github_pat_…" autocomplete="off">
     <div class="btns" style="grid-template-columns:1fr"><button class="b primary" id="s-save">開始使用</button></div>
@@ -133,6 +136,7 @@ function status(text, cls = "") { $("status").textContent = text; $("status").cl
 // 「加到主畫面」做出來的 App 和瀏覽器的儲存空間是分開的（iPhone 尤其如此），所以不能只存在 localStorage：
 // 網址保留 #…，再把 manifest 的 start_url 換成這條連結，主畫面上的 App 一打開就帶著設定。
 let CFG = null;
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const STANDALONE = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 function loadCfg() {
   const h = new URLSearchParams(location.hash.slice(1));
@@ -157,10 +161,10 @@ function setManifest(startUrl) {
              start_url: startUrl, scope: base, id: base, background_color: "#f3f5f8", theme_color: "#0969da",
              icons: [192, 512].map(n => ({src: `${base}icon-${n}.png`, sizes: `${n}x${n}`, type: "image/png",
                                           purpose: "any maskable"}))};
-  const link = document.querySelector('link[rel="manifest"]');
-  if (!link) return;
-  // iPhone：Safari 有 manifest 時可能改用它的 start_url（丟掉 # 後面的設定），乾脆拿掉，讓它用目前網址
-  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) { link.remove(); return; }
+  // iPhone 不給 manifest，讓它用目前網址（帶著 # 設定）當主畫面 App 的網址
+  if (IOS) return;
+  let link = document.querySelector('link[rel="manifest"]');
+  if (!link) { link = document.createElement("link"); link.rel = "manifest"; document.head.appendChild(link); }
   link.href = "data:application/manifest+json;charset=utf-8," + encodeURIComponent(JSON.stringify(m));
 }
 async function gh(method, name, body) {
@@ -259,6 +263,16 @@ $("clear").addEventListener("click", () => { $("text").value = ""; command("note
 $("auto").addEventListener("change", e => command("sign_auto", {on: e.target.checked}));
 document.querySelectorAll("[data-s]").forEach(b => b.addEventListener("click", () =>
   command("screen", {state: b.dataset.s, minutes: b.dataset.m === "today" ? "today" : +b.dataset.m})));
+// 從剪貼簿讀設定連結（iPhone 會跳出「貼上」確認）
+$("s-paste").addEventListener("click", async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    const h = new URLSearchParams((text.split("#")[1] || ""));
+    if (!h.get("r") || !h.get("t")) throw new Error("剪貼簿裡不是設定連結");
+    location.hash = h;
+    start();
+  } catch (e) { status("貼上失敗：" + (e.message || "沒有權限讀剪貼簿") + "，可以改用下面手動填", "err"); }
+});
 $("s-save").addEventListener("click", () => {
   location.hash = new URLSearchParams({r: $("s-repo").value.trim(), t: $("s-token").value.trim()});
   start();
@@ -274,7 +288,7 @@ function showInstall() {
   let later = false;
   try { later = sessionStorage.getItem("install-later") === "1"; } catch (e) {}
   if (later) return;
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const ios = IOS;
   $("install-text").innerHTML = INSTALL_EVT ? "按下面的「安裝到桌面」，之後從桌面的「相框」圖示打開，不用再設定。"
     : ios ? "用 <b>Safari</b> 開這頁，按下方的 <b>分享</b> 鈕（方框加箭頭）→ <b>加入主畫面</b> → 加入。<br>之後從桌面的「相框」圖示打開，不用再設定。"
     : "按瀏覽器右上角 <b>⋮</b> → <b>安裝應用程式</b>（或「加到主畫面」）。<br>之後從桌面的「相框」圖示打開，不用再設定。";
