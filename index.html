@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-TW" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="google" content="notranslate">
+<meta name="theme-color" content="#0969da">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="辦公室相框">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>辦公室相框</title>
+<style>
+  /* 遙控 App：同一個檔案兩種跑法
+     - 放在 GitHub Pages：指令寫進私人中繼 repo 的 command.json，Pi 每 20 秒讀一次，做完寫回 state.json
+     - 從 Pi 開（http://<Tailscale IP>:8080/remote/）：直接打 Pi 的 /api */
+  :root { --bg: #f3f5f8; --panel: #fff; --fg: #1f2328; --muted: #656d76; --line: #e1e5ea; --accent: #0969da;
+          --soft: #0969da14; --ok: #1a7f37; --err: #cf222e; --on-accent: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --panel: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #30363d; --accent: #58a6ff;
+            --soft: #58a6ff1f; --ok: #3fb950; --err: #ff7b72; --on-accent: #0d1117; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, "Noto Sans TC", sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 22px; margin: 4px 4px 2px; }
+  #status { color: var(--muted); font-size: 13px; margin: 0 4px 14px; min-height: 20px; }
+  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
+  .now { background: var(--soft); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  .now b { font-size: 22px; display: block; line-height: 1.3; overflow-wrap: anywhere; }
+  .now span { color: var(--muted); font-size: 13px; }
+  .quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .quick button { border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px;
+                  padding: 8px 14px; border-radius: 999px; }
+  input[type=text], input[type=password] { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 17px; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .label { font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg); border: 1px solid var(--line);
+         border-radius: 12px; padding: 3px; }
+  .seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; padding: 9px 2px; border-radius: 9px; }
+  .seg button.on { background: var(--panel); color: var(--fg); font-weight: 600; box-shadow: 0 1px 3px #0002; }
+  .btns { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 14px; }
+  .btns.three { grid-template-columns: 1fr 1fr 1fr; }
+  button.b { border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; font-size: 16px;
+             padding: 13px 8px; border-radius: 12px; font-weight: 600; }
+  button.b.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  button:disabled { opacity: .5; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px;
+         padding-top: 14px; border-top: 1px solid var(--line); }
+  .row small { display: block; color: var(--muted); font-size: 12px; }
+  .switch { position: relative; width: 50px; height: 30px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--line); border-radius: 15px; transition: .15s; }
+  .switch span::after { content: ""; position: absolute; width: 24px; height: 24px; left: 3px; top: 3px; background: #fff;
+                        border-radius: 50%; transition: .15s; box-shadow: 0 1px 2px #0003; }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::after { transform: translateX(20px); }
+  .hint { color: var(--muted); font-size: 13px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🖼️ 辦公室相框</h1>
+  <div id="status">讀取中…</div>
+
+  <!-- 第一次用（GitHub 模式）：貼上中繼 repo 和 token；通常是用帶 #r=…&t=… 的連結一次設好 -->
+  <div class="card" id="setup" hidden>
+    <h2>第一次使用</h2>
+    <div class="hint">請用寄給你的設定連結打開，或在這裡貼上：</div>
+    <div class="label">中繼 repo</div><input type="text" id="s-repo" placeholder="帳號/pi-frame-relay" autocomplete="off" spellcheck="false">
+    <div class="label">token</div><input type="password" id="s-token" placeholder="github_pat_…" autocomplete="off">
+    <div class="btns" style="grid-template-columns:1fr"><button class="b primary" id="s-save">開始使用</button></div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="card">
+      <h2>門牌</h2>
+      <div class="now" id="sign-now"></div>
+      <div class="quick" id="quick">
+        <button>外出，馬上回來</button><button>開會中，請勿打擾</button><button>午餐中</button>
+        <button>今天請假</button><button>在實驗室</button>
+      </div>
+      <input type="text" id="text" maxlength="40" placeholder="或自己打一句">
+      <div class="label">顯示多久</div>
+      <div class="seg" id="dur">
+        <button data-m="60">1 小時</button><button data-m="180">3 小時</button>
+        <button data-m="today">到今天結束</button><button data-m="0">不消失</button>
+      </div>
+      <div class="btns"><button class="b" id="clear">清除</button><button class="b primary" id="send">放上螢幕</button></div>
+      <div class="row"><div>沒留言時自動顯示<small>依行事曆顯示上課中、開會中、在辦公室</small></div>
+        <label class="switch"><input type="checkbox" id="auto"><span></span></label></div>
+    </div>
+
+    <div class="card">
+      <h2>螢幕</h2>
+      <div class="now" id="scr-now"></div>
+      <div class="btns three">
+        <button class="b" data-s="on" data-m="60">亮 1 小時</button>
+        <button class="b" data-s="off" data-m="today">關到今天結束</button>
+        <button class="b" data-s="auto">回到自動</button>
+      </div>
+    </div>
+    <div class="hint" id="mode-hint" style="text-align:center"></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const hm = ts => new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit",
+                                                   hourCycle: "h23"}).format(new Date(ts * 1000));
+const until = ts => !ts ? "" : ts - Date.now() / 1000 > 86400 ? "，幾天後消失" : `，到 ${hm(ts)}`;
+const LOCAL = !location.hostname.endsWith("github.io");   // 從 Pi 開就直接打 /api
+let STATE = null, dur = "60";
+
+function status(text, cls = "") { $("status").textContent = text; $("status").className = cls; }
+
+// ---------------------------------------------------------------- GitHub 中繼
+// 設定只存在這支手機（localStorage）。設定連結把 repo 和 token 放在 # 後面：# 後面不會送到任何伺服器，讀完立刻從網址列拿掉
+let CFG = null;
+function loadCfg() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("r") && h.get("t")) {
+    try { localStorage.setItem("relay", JSON.stringify({repo: h.get("r"), token: h.get("t")})); } catch (e) {}
+    CFG = {repo: h.get("r"), token: h.get("t")};
+    history.replaceState(null, "", location.pathname);
+  }
+  if (!CFG) try { CFG = JSON.parse(localStorage.getItem("relay")); } catch (e) {}
+  return CFG && CFG.repo && CFG.token;
+}
+async function gh(method, name, body) {
+  const r = await fetch(`https://api.github.com/repos/${CFG.repo}/contents/${name}`, {
+    method, cache: "no-store", body: body && JSON.stringify(body),
+    headers: {Authorization: `Bearer ${CFG.token}`, Accept: "application/vnd.github+json"}});
+  if (r.status === 404 && method === "GET") return null;
+  if (r.status === 401) throw new Error("token 失效或打錯，請跟設定的人要新的連結");
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  return r.json();
+}
+const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, "")), c => c.charCodeAt(0)));
+const b64enc = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+async function readJson(name) {
+  const d = await gh("GET", name);
+  return d ? {sha: d.sha, obj: JSON.parse(b64dec(d.content) || "{}")} : {sha: null, obj: {}};
+}
+async function relayCommand(key, payload) {
+  const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  for (let tryNo = 0; ; tryNo++) {
+    const {sha, obj} = await readJson("command.json");
+    obj[key] = {id, at: Math.floor(Date.now() / 1000), ...payload};
+    try {
+      await gh("PUT", "command.json", {message: `remote: ${key}`, content: b64enc(JSON.stringify(obj, null, 1)),
+                                       ...(sha ? {sha} : {})});
+      break;
+    } catch (e) {
+      if (tryNo >= 2) throw e;   // 同時有人在改（409／422）就重讀再寫
+    }
+  }
+  status("已送出，等相框接收（最多約半分鐘）…");
+  for (let i = 0; i < 24; i++) {   // 每 5 秒看一次 Pi 回報，最多 2 分鐘
+    await new Promise(r => setTimeout(r, 5000));
+    const st = (await readJson("state.json")).obj;
+    if (st.acked && st.acked[key] === id) { STATE = st; render(); status("✓ 相框已更新", "ok"); return; }
+  }
+  status("相框還沒回應，可能沒連上網路；指令會在它連上後執行", "err");
+}
+
+// ---------------------------------------------------------------- 本機（Tailscale）
+async function local(path, body) {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"},
+                                     body: JSON.stringify(body)} : {cache: "no-store"});
+  const d = await r.json();
+  if (!r.ok || d.ok === false) throw new Error(d.error || r.status);
+  return d;
+}
+
+// ---------------------------------------------------------------- 共用
+async function command(key, payload) {
+  document.querySelectorAll("button").forEach(b => b.disabled = true);
+  try {
+    if (LOCAL) {
+      const path = {note: "/api/note", screen: "/api/screen", sign_auto: "/api/display"}[key];
+      const body = key === "sign_auto" ? {sign_auto: payload.on} : payload;
+      STATE = (await local(path, body)).state;
+      render(); status("✓ 相框已更新", "ok");
+    } else await relayCommand(key, payload);
+  } catch (e) { status("失敗：" + e.message, "err"); }
+  finally { document.querySelectorAll("button").forEach(b => b.disabled = false); }
+}
+async function refresh() {
+  try {
+    STATE = LOCAL ? await local("/api/state") : (await readJson("state.json")).obj;
+    render();
+    if (!LOCAL) {
+      const age = Date.now() / 1000 - (STATE.at || 0);
+      status(STATE.at ? (age > 2400 ? `⚠ 相框可能離線（最後回報 ${hm(STATE.at)}）` : `相框 ${hm(STATE.at)} 回報`) : "相框還沒回報過",
+             age > 2400 ? "err" : "");
+    } else status("");
+  } catch (e) { status("讀不到：" + e.message, "err"); }
+}
+function render() {
+  const s = STATE || {};
+  const sign = s.sign && (!s.sign.until || s.sign.until * 1000 > Date.now()) ? s.sign : null;
+  $("sign-now").innerHTML = sign
+    ? `<span>螢幕上現在顯示</span><b>${esc(sign.text)}</b><span>${sign.source === "manual" ? "留言" : "自動"}${until(sign.until)}</span>`
+    : `<span>螢幕上現在</span><b>沒有門牌</b>`;
+  $("auto").checked = !!s.sign_auto;
+  const sc = s.screen || {};
+  const lit = sc.lit ?? sc.on;
+  $("scr-now").innerHTML = `<b>${lit ? "💡 亮著" : "🌙 關著"}</b><span>` +
+    ({manual: "手動" + until(sc.until), weekend: "週末自動關", schedule: `自動：${sc.off_at} 關、${sc.on_at} 開`,
+      always: "沒設定自動開關"}[sc.why] || "") + "</span>";
+  document.querySelectorAll("#dur button").forEach(b => b.classList.toggle("on", b.dataset.m === dur));
+}
+
+$("quick").addEventListener("click", e => { if (e.target.tagName === "BUTTON") $("text").value = e.target.textContent; });
+$("dur").addEventListener("click", e => { if (e.target.dataset.m) { dur = e.target.dataset.m; render(); } });
+$("send").addEventListener("click", () => {
+  const text = $("text").value.trim();
+  if (!text) { status("先點一句常用的，或自己打", "err"); return; }
+  command("note", {text, minutes: dur === "today" ? "today" : +dur});
+});
+$("clear").addEventListener("click", () => { $("text").value = ""; command("note", {text: ""}); });
+$("auto").addEventListener("change", e => command("sign_auto", {on: e.target.checked}));
+document.querySelectorAll("[data-s]").forEach(b => b.addEventListener("click", () =>
+  command("screen", {state: b.dataset.s, minutes: b.dataset.m === "today" ? "today" : +b.dataset.m})));
+$("s-save").addEventListener("click", () => {
+  location.hash = new URLSearchParams({r: $("s-repo").value.trim(), t: $("s-token").value.trim()});
+  start();
+});
+
+function start() {
+  if (!LOCAL && !loadCfg()) { $("setup").hidden = false; $("app").hidden = true; status(""); return; }
+  $("setup").hidden = true; $("app").hidden = false;
+  $("mode-hint").textContent = LOCAL ? "直接連相框（Tailscale）" : "經 GitHub 轉送，按下後約半分鐘內生效";
+  refresh();
+}
+// 回到 App 時更新一下（手機切回來、從主畫面再打開）
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("app").hidden) refresh(); });
+start();
+</script>
+</body>
+</html>
