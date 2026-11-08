@@ -44,6 +44,21 @@
          border-radius: 12px; padding: 3px; }
   .seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; padding: 9px 2px; border-radius: 9px; }
   .seg button.on { background: var(--panel); color: var(--fg); font-weight: 600; box-shadow: 0 1px 3px #0002; }
+  /* 顯示多久：前兩格是「− N 小時 ＋」自己調，點中間或 ±都會選這個 */
+  .seg .hrs { grid-column: span 2; display: flex; align-items: center; border-radius: 9px; }
+  .seg .hrs.on { background: var(--panel); box-shadow: 0 1px 3px #0000001f; }
+  .seg .hrs button { padding-left: 0; padding-right: 0; }
+  .seg .hrs .hv { flex: 1; }
+  .seg .hrs.on .hv { color: var(--fg); font-weight: 600; }
+  .seg .hrs .step { width: 30px; height: 30px; flex: none; margin: 0 6px; padding: 0; border-radius: 50%;
+                    display: grid; place-items: center; font-size: 17px; font-weight: 600; line-height: 1; color: var(--fg);
+                    background: var(--line); border: 1px solid #ffffff14; box-shadow: 0 1px 2px #0000004d, inset 0 1px 0 #ffffff14;
+                    cursor: pointer; transition: background .15s, transform .1s; }
+  .seg .hrs .step:hover:not(:disabled) { background: color-mix(in srgb, var(--line) 70%, var(--fg) 30%); }
+  .seg .hrs .step:active:not(:disabled) { transform: scale(.92); }
+  .seg .hrs .step:disabled { opacity: .3; cursor: default; box-shadow: none; }
+  .seg .hrs.on .step { background: color-mix(in srgb, var(--line) 75%, var(--fg) 25%); }
+  .until { color: var(--muted); font-weight: 400; margin-left: .5em; }
   .btns { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 14px; }
   .btns.three { grid-template-columns: 1fr 1fr 1fr; }
   button.b { border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; font-size: 16px;
@@ -98,9 +113,9 @@
         <button>今天請假</button><button>在實驗室</button>
       </div>
       <input type="text" id="text" maxlength="40" placeholder="或自己打一句">
-      <div class="label">顯示多久</div>
+      <div class="label">顯示多久<span class="until" id="dur-until"></span></div>
       <div class="seg" id="dur">
-        <button data-m="60">1 小時</button><button data-m="180">3 小時</button>
+        <div class="hrs" data-m="h"><button type="button" class="step" data-d="-1" aria-label="少一小時">−</button><button type="button" class="hv" data-m="h"><span class="hn">1</span> 小時</button><button type="button" class="step" data-d="1" aria-label="多一小時">＋</button></div>
         <button data-m="today">到今天結束</button><button data-m="0">不消失</button>
       </div>
       <div class="btns"><button class="b" id="clear">清除</button><button class="b primary" id="send">放上螢幕</button></div>
@@ -127,7 +142,33 @@ const hm = ts => new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Taipei", hour
                                                    hourCycle: "h23"}).format(new Date(ts * 1000));
 const until = ts => !ts ? "" : ts - Date.now() / 1000 > 86400 ? "，幾天後消失" : `，到 ${hm(ts)}`;
 const LOCAL = !location.hostname.endsWith("github.io");   // 從 Pi 開就直接打 /api
-let STATE = null, dur = "60";
+let STATE = null, dur = "h";
+// 顯示多久：自己調幾小時（1–24，記住上次的設定）；dur 是 "h"（用小時）、"today" 或 "0"
+let noteHours = 1;
+try { noteHours = Math.min(24, Math.max(1, +localStorage.getItem("noteHours") || 1)); } catch (_) {}
+function renderHours(boxId, mode) {
+  const box = document.getElementById(boxId), h = box.querySelector(".hrs");
+  h.classList.toggle("on", mode === "h");
+  h.querySelector(".hn").textContent = noteHours;
+  h.querySelector('[data-d="-1"]').disabled = noteHours <= 1;
+  h.querySelector('[data-d="1"]').disabled = noteHours >= 24;
+  const end = new Date(Date.now() + noteHours * 3600e3);
+  const u = document.getElementById(boxId + "-until");
+  if (u) u.textContent = mode === "h" ? `到 ${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}` +
+    (end.getDate() !== new Date().getDate() ? "（明天）" : "") : "";
+}
+function hoursClick(e) {
+  const b = e.target.closest("button");
+  if (!b) return null;
+  if (b.dataset.d) {
+    noteHours = Math.min(24, Math.max(1, noteHours + +b.dataset.d));
+    try { localStorage.setItem("noteHours", noteHours); } catch (_) {}
+    return "h";
+  }
+  return b.dataset.m || null;
+}
+const durMinutes = d => d === "today" ? "today" : d === "h" ? noteHours * 60 : +d;
+
 
 function status(text, cls = "") { $("status").textContent = text; $("status").className = cls; }
 
@@ -249,15 +290,17 @@ function render() {
   $("scr-now").innerHTML = `<b>${lit ? "💡 亮著" : "🌙 關著"}</b><span>` +
     ({manual: "手動" + until(sc.until), weekend: "週末自動關", schedule: `自動：${sc.off_at} 關、${sc.on_at} 開`,
       always: "沒設定自動開關"}[sc.why] || "") + "</span>";
-  document.querySelectorAll("#dur button").forEach(b => b.classList.toggle("on", b.dataset.m === dur));
+  document.querySelectorAll("#dur > button").forEach(b => b.classList.toggle("on", b.dataset.m === dur));
+  renderHours("dur", dur);
 }
 
 $("quick").addEventListener("click", e => { if (e.target.tagName === "BUTTON") $("text").value = e.target.textContent; });
-$("dur").addEventListener("click", e => { if (e.target.dataset.m) { dur = e.target.dataset.m; render(); } });
+$("dur").addEventListener("click", e => { const m = hoursClick(e); if (m) { dur = m; render(); } });
+setInterval(() => renderHours("dur", dur), 30000);
 $("send").addEventListener("click", () => {
   const text = $("text").value.trim();
   if (!text) { status("先點一句常用的，或自己打", "err"); return; }
-  command("note", {text, minutes: dur === "today" ? "today" : +dur});
+  command("note", {text, minutes: durMinutes(dur)});
 });
 $("clear").addEventListener("click", () => { $("text").value = ""; command("note", {text: ""}); });
 $("auto").addEventListener("change", e => command("sign_auto", {on: e.target.checked}));
