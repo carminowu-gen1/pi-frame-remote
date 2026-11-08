@@ -77,6 +77,15 @@
     <div class="btns" style="grid-template-columns:1fr"><button class="b primary" id="s-save">開始使用</button></div>
   </div>
 
+  <!-- 還在瀏覽器裡（不是從主畫面開的）：教她放到桌面；Android 有安裝鈕就直接按 -->
+  <div class="card" id="install" hidden style="border-color:var(--accent)">
+    <h2>放到手機桌面</h2>
+    <div id="install-text" class="hint" style="font-size:15px;color:var(--fg)"></div>
+    <div class="btns" style="grid-template-columns:1fr 1fr">
+      <button class="b" id="install-later">之後再說</button><button class="b primary" id="install-go" hidden>安裝到桌面</button>
+    </div>
+  </div>
+
   <div id="app" hidden>
     <div class="card">
       <h2>門牌</h2>
@@ -120,17 +129,39 @@ let STATE = null, dur = "60";
 function status(text, cls = "") { $("status").textContent = text; $("status").className = cls; }
 
 // ---------------------------------------------------------------- GitHub 中繼
-// 設定只存在這支手機（localStorage）。設定連結把 repo 和 token 放在 # 後面：# 後面不會送到任何伺服器，讀完立刻從網址列拿掉
+// 設定連結把 repo 和 token 放在 # 後面（# 後面不會送到任何伺服器）。
+// 「加到主畫面」做出來的 App 和瀏覽器的儲存空間是分開的（iPhone 尤其如此），所以不能只存在 localStorage：
+// 網址保留 #…，再把 manifest 的 start_url 換成這條連結，主畫面上的 App 一打開就帶著設定。
 let CFG = null;
+const STANDALONE = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 function loadCfg() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("r") && h.get("t")) {
-    try { localStorage.setItem("relay", JSON.stringify({repo: h.get("r"), token: h.get("t")})); } catch (e) {}
     CFG = {repo: h.get("r"), token: h.get("t")};
-    history.replaceState(null, "", location.pathname);
+    try { localStorage.setItem("relay", JSON.stringify(CFG)); } catch (e) {}
   }
   if (!CFG) try { CFG = JSON.parse(localStorage.getItem("relay")); } catch (e) {}
-  return CFG && CFG.repo && CFG.token;
+  const ok = !!(CFG && CFG.repo && CFG.token);
+  if (ok) {
+    // 網址沒帶設定（從 localStorage 讀到的）就補回去，接下來加到主畫面時才會帶著走
+    const want = "#" + new URLSearchParams({r: CFG.repo, t: CFG.token});
+    if (location.hash !== want) history.replaceState(null, "", location.pathname + want);
+    setManifest(location.href);
+  }
+  return ok;
+}
+// 動態 manifest：start_url＝帶設定的這個網址（Android「安裝應用程式」用它；iPhone 用目前網址，上面已經補好）
+function setManifest(startUrl) {
+  const base = new URL(".", location.href).href;
+  const m = {name: "辦公室相框", short_name: "相框", lang: "zh-TW", display: "standalone",
+             start_url: startUrl, scope: base, id: base, background_color: "#f3f5f8", theme_color: "#0969da",
+             icons: [192, 512].map(n => ({src: `${base}icon-${n}.png`, sizes: `${n}x${n}`, type: "image/png",
+                                          purpose: "any maskable"}))};
+  const link = document.querySelector('link[rel="manifest"]');
+  if (!link) return;
+  // iPhone：Safari 有 manifest 時可能改用它的 start_url（丟掉 # 後面的設定），乾脆拿掉，讓它用目前網址
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) { link.remove(); return; }
+  link.href = "data:application/manifest+json;charset=utf-8," + encodeURIComponent(JSON.stringify(m));
 }
 async function gh(method, name, body) {
   const r = await fetch(`https://api.github.com/repos/${CFG.repo}/contents/${name}`, {
@@ -233,9 +264,39 @@ $("s-save").addEventListener("click", () => {
   start();
 });
 
+// ---------------------------------------------------------------- 放到桌面
+let INSTALL_EVT = null;
+window.addEventListener("beforeinstallprompt", e => {   // Android Chrome：可以直接跳出安裝視窗
+  e.preventDefault(); INSTALL_EVT = e; $("install-go").hidden = false; showInstall();
+});
+function showInstall() {
+  if (STANDALONE || $("app").hidden) return;
+  let later = false;
+  try { later = sessionStorage.getItem("install-later") === "1"; } catch (e) {}
+  if (later) return;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  $("install-text").innerHTML = INSTALL_EVT ? "按下面的「安裝到桌面」，之後從桌面的「相框」圖示打開，不用再設定。"
+    : ios ? "用 <b>Safari</b> 開這頁，按下方的 <b>分享</b> 鈕（方框加箭頭）→ <b>加入主畫面</b> → 加入。<br>之後從桌面的「相框」圖示打開，不用再設定。"
+    : "按瀏覽器右上角 <b>⋮</b> → <b>安裝應用程式</b>（或「加到主畫面」）。<br>之後從桌面的「相框」圖示打開，不用再設定。";
+  $("install").hidden = false;
+}
+$("install-go").addEventListener("click", async () => {
+  if (!INSTALL_EVT) return;
+  INSTALL_EVT.prompt();
+  const r = await INSTALL_EVT.userChoice;
+  if (r.outcome === "accepted") $("install").hidden = true;
+  INSTALL_EVT = null;
+});
+$("install-later").addEventListener("click", () => {
+  $("install").hidden = true;
+  try { sessionStorage.setItem("install-later", "1"); } catch (e) {}
+});
+window.addEventListener("appinstalled", () => { $("install").hidden = true; });
+
 function start() {
   if (!LOCAL && !loadCfg()) { $("setup").hidden = false; $("app").hidden = true; status(""); return; }
   $("setup").hidden = true; $("app").hidden = false;
+  showInstall();
   $("mode-hint").textContent = LOCAL ? "直接連相框（Tailscale）" : "經 GitHub 轉送，按下後約半分鐘內生效";
   refresh();
 }
