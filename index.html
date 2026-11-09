@@ -152,10 +152,12 @@ function renderHours(boxId, mode) {
   h.querySelector(".hn").textContent = noteHours;
   h.querySelector('[data-d="-1"]').disabled = noteHours <= 1;
   h.querySelector('[data-d="1"]').disabled = noteHours >= 24;
-  const end = new Date(Date.now() + noteHours * 3600e3);
+  // 用台北時間算（相框在台北；手機或電腦的時區可能不一樣）
+  const tw = d => new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Taipei", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"})
+    .formatToParts(d).reduce((o, p) => (o[p.type] = p.value, o), {});
+  const end = tw(new Date(Date.now() + noteHours * 3600e3)), now = tw(new Date());
   const u = document.getElementById(boxId + "-until");
-  if (u) u.textContent = mode === "h" ? `到 ${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}` +
-    (end.getDate() !== new Date().getDate() ? "（明天）" : "") : "";
+  if (u) u.textContent = mode === "h" ? `到 ${end.hour}:${end.minute}` + (end.day !== now.day ? "（明天）" : "") : "";
 }
 function hoursClick(e) {
   const b = e.target.closest("button");
